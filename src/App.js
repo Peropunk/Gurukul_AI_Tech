@@ -1,95 +1,99 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import * as faceapi from "face-api.js";
-import * as tf from "@tensorflow/tfjs";
 import * as handpose from "@tensorflow-models/handpose";
+import * as mobilenet from "@tensorflow-models/mobilenet";
+import * as tmImage from "@teachablemachine/image";
+import * as tf from "@tensorflow/tfjs";
+import "@tensorflow/tfjs-backend-webgl";
+
 
 const CameraFeed = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handModelRef = useRef(null);
+  const bookModelRef = useRef(null);
   const [studentsPresent, setStudentsPresent] = useState(new Set());
   const [handRaiseCount, setHandRaiseCount] = useState({});
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [faceMatcher, setFaceMatcher] = useState(null);
+  const [detectedBook, setDetectedBook] = useState(null);
 
-  // ✅ Load Face API Models
+  const bookLabels = {
+    "notebook": "Notebook",
+    "dictionary": "Dictionary",
+    "novel": "Novel",
+    "textbook": "Textbook"
+  };
+
+  // Load Face API Models
   const loadFaceModels = async () => {
-    try {
-      console.log("⏳ Loading face models...");
-      await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri("/models"),
-        faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
-        faceapi.nets.faceRecognitionNet.loadFromUri("/models"),
-      ]);
-      console.log("✅ Face models loaded!");
-    } catch (error) {
-      console.error("❌ Error loading face models:", error);
-    }
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri("/models"),
+      faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
+      faceapi.nets.faceRecognitionNet.loadFromUri("/models"),
+    ]);
   };
 
-  // ✅ Load Labeled Face Descriptors
+  // Load Labeled Face Descriptors
   const loadLabeledImages = async () => {
-    try {
-      console.log("⏳ Loading labeled images...");
-      const labels = ["Ayush", "priyanshu"];
-      const labeledDescriptors = [];
-
-      for (let label of labels) {
-        const img = await faceapi.fetchImage(`/students/${label.toLowerCase()}.jpg`);
-        const detections = await faceapi
-          .detectSingleFace(img)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-
-        if (detections) {
-          labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(label, [detections.descriptor]));
-        }
+    const labels = ["Ayush", "Priyanshu"];
+    const labeledDescriptors = [];
+    
+    for (let label of labels) {
+      const img = await faceapi.fetchImage(`/students/${label.toLowerCase()}.jpg`);
+      const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+      if (detections) {
+        labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(label, [detections.descriptor]));
       }
-
-      setFaceMatcher(new faceapi.FaceMatcher(labeledDescriptors));
-      console.log("✅ Face Descriptors Loaded!");
-    } catch (error) {
-      console.error("❌ Error loading labeled images:", error);
     }
+    setFaceMatcher(new faceapi.FaceMatcher(labeledDescriptors));
   };
 
-  // ✅ Load Handpose Model
+  // Load Handpose Model
   const loadHandModel = async () => {
+    handModelRef.current = await handpose.load();
+  };
+
+  // Load Book Classification Model
+  const loadBookModel = async () => {
     try {
-      console.log("⏳ Loading hand detection model...");
-      handModelRef.current = await handpose.load();
-      console.log("✅ Hand Model Loaded!");
+      console.log("⏳ Loading Teachable Machine Book Model...");
+  
+      const modelURL = "/models/model.json";
+      const metadataURL = "/models/metadata.json";
+  
+      // Load the model
+      const model = await tmImage.load(modelURL, metadataURL);
+      bookModelRef.current = model;
+  
+      console.log("✅ Teachable Machine Book Model Loaded!");
     } catch (error) {
-      console.error("❌ Error loading hand model:", error);
+      console.error("❌ Error loading book model:", error);
     }
   };
 
-  // ✅ Start Camera
+  
+  
+  
+
+  // Start Video
   useEffect(() => {
     const startVideo = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      } catch (err) {
-        console.error("❌ Error accessing webcam:", err);
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) videoRef.current.srcObject = stream;
     };
 
     startVideo();
     loadFaceModels().then(loadLabeledImages).then(() => setModelsLoaded(true));
     loadHandModel();
+    loadBookModel();
   }, []);
 
-  // ✅ Detect Faces
+  // Detect Faces
   const detectFaces = async () => {
     if (!modelsLoaded || !videoRef.current || !faceMatcher) return;
-
-    const detections = await faceapi.detectAllFaces(
-      videoRef.current,
-      new faceapi.SsdMobilenetv1Options()
-    ).withFaceLandmarks().withFaceDescriptors();
-
+    const detections = await faceapi.detectAllFaces(videoRef.current, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceDescriptors();
     if (!detections.length) return;
 
     const canvas = canvasRef.current;
@@ -104,88 +108,61 @@ const CameraFeed = () => {
       ctx.font = "16px Arial";
       ctx.fillText(bestMatch.toString(), detection.detection.box.x, detection.detection.box.y - 10);
       faceapi.draw.drawDetections(canvas, [detection]);
-
       if (bestMatch.label !== "unknown") {
-        setStudentsPresent((prev) => {
-          const updatedSet = new Set(prev);
-          updatedSet.add(bestMatch.label);
-          return new Set(updatedSet); // Ensures reactivity
-        });
+        setStudentsPresent((prev) => new Set([...prev, bestMatch.label]));
       }
     });
-
-    requestAnimationFrame(detectFaces);
   };
-  console.log("Hand Model Ref:", handModelRef.current);
 
-  // ✅ Detect Hand Raises
-  const detectHands = async () => {
-    if (!handModelRef.current || !videoRef.current) {
-      console.log("❌ Hand model or video not ready");
-      return;
-    }
-  
-    console.log("🟡 Running hand detection...");
-    
+  // Detect Books
+  const detectBook = async () => {
+    if (!bookModelRef.current || !videoRef.current) return;
+
     try {
-      const predictions = await handModelRef.current.estimateHands(videoRef.current);
-      console.log("🔍 Hand detection predictions:", predictions);
-      
-      if (predictions.length > 0) {
-        console.log("✋ Hand detected!", predictions);
-      } else {
-        console.log("🛑 No hands detected.");
-      }
+        const prediction = await bookModelRef.current.predict(videoRef.current);
+        console.log("📚 Book Predictions:", prediction);
+
+        if (prediction.length > 0) {
+            const highestPrediction = prediction.reduce((prev, curr) =>
+                prev.probability > curr.probability ? prev : curr
+            );
+            setDetectedBook(bookLabels[highestPrediction.className] || "Unknown Book");
+        }
     } catch (error) {
-      console.error("🚨 Error detecting hands:", error);
+        console.error("🚨 Error classifying book:", error);
     }
-  };
-  
+};
+
   
 
-  // ✅ Run Face & Hand Detection Continuously
+  // Run Face, Hand & Book Detection Continuously
   useEffect(() => {
     if (modelsLoaded && faceMatcher) {
-      requestAnimationFrame(detectFaces);
-      requestAnimationFrame(detectHands);
+      const interval = setInterval(() => {
+        detectFaces();
+        detectBook(); // Call the book detection function
+      }, 1000);
+      return () => clearInterval(interval);
     }
   }, [modelsLoaded, faceMatcher]);
+  
 
   return (
     <div style={{ textAlign: "center", position: "relative" }}>
-      <h2>📸 Face & Hand Tracking</h2>
-
+      <h2>📸 Face, Hand & Book Recognition</h2>
       {!modelsLoaded ? <p>⏳ Loading models, please wait...</p> : null}
-
       <div style={{ position: "relative", display: "inline-block" }}>
         <video ref={videoRef} autoPlay style={{ width: "100%", borderRadius: "10px" }} />
-        <canvas
-          ref={canvasRef}
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            borderRadius: "10px",
-          }}
-        />
+        <canvas ref={canvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", borderRadius: "10px" }} />
       </div>
-
       <h3>✅ Attendance List:</h3>
       <ul>
         {[...studentsPresent].map((name, index) => (
           <li key={index}>{name}</li>
         ))}
       </ul>
-
-      <h3>🙋‍♂️ Hand Raise Count:</h3>
-      <ul>
-        {Object.entries(handRaiseCount).map(([name, count]) => (
-          <li key={name}>
-            {name}: {count} times
-          </li>
-        ))}
-      </ul>
+      <h3>📚 Detected Book:</h3>
+      <p>{detectedBook || "No book detected"}</p>
     </div>
   );
 };

@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@teachablemachine/image": "^0.8.5",
     "@tensorflow-models/handpose": "^0.1.0",
-    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow-models/mobilenet": "^2.1.1",
+    "@tensorflow/tfjs": "^3.21.0",
     "cra-template": "1.2.0",
     "face-api.js": "^0.22.2",
     "react": "^19.0.0",
@@ -35,5 +37,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11"
   }
 }
